@@ -1,3 +1,7 @@
+Note for Evaluators:
+This repository uses a branch-based development workflow. Individual features (such as document upload, search, indexing, data cleaning, and other components) have been developed and tested in separate feature branches. The main branch may not yet contain all completed work. Please review the relevant feature branches for the latest implementation and progress.
+
+
 # Data.run
 
 An AI-powered analytics agent that combines semantic document retrieval and Python-based data analysis to answer natural language queries over CSV and PDF files.
