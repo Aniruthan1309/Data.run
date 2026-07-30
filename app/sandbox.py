@@ -4,6 +4,8 @@ import traceback
 import ast
 import math
 import numpy as np
+import multiprocessing
+import queue
 
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -59,7 +61,7 @@ def validate_code(code: str):
                     f"Import '{module}' is not allowed."
                 )
                 
-def run_python(code: str, df: pd.DataFrame):
+def _execute_code(code, df, output_queue):
     
     #Execute AI-generated Python code on a pandas DataFrame.
 
@@ -90,11 +92,11 @@ def run_python(code: str, df: pd.DataFrame):
         if has_active_figure():
             chart = figure_to_base64()
 
-        return {
+        output_queue.put({
             "stdout": output if output else None,
             "chartBase64": chart,
             "error": None,
-        }
+        })
 
     except Exception:
         plt.close("all")
@@ -103,4 +105,39 @@ def run_python(code: str, df: pd.DataFrame):
             "stdout": None,
             "chartBase64": None,
             "error": traceback.format_exc(),
+        }
+def run_python(code: str, df: pd.DataFrame):
+
+    output_queue = multiprocessing.Queue()
+
+    process = multiprocessing.Process(
+        target=_execute_code,
+        args=(code, df, output_queue)
+    )
+
+    process.start()
+
+    process.join(timeout=5)
+
+    if process.is_alive():
+
+        process.terminate()
+
+        process.join()
+
+        return {
+            "stdout": None,
+            "chartBase64": None,
+            "error": "Execution timed out after 5 seconds."
+        }
+
+    try:
+        return output_queue.get_nowait()
+
+    except queue.Empty:
+
+        return {
+            "stdout": None,
+            "chartBase64": None,
+            "error": "No output returned."
         }
