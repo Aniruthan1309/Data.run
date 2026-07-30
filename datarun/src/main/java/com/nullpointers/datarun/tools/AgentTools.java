@@ -27,10 +27,17 @@ public class AgentTools {
     }
 
     @Tool(description = "Execute Python code on the uploaded dataset")
-    public ExecuteResponse runPython(ExecuteRequest request) {
+    public ExecuteResponse runPython(
+
+            @ToolParam(description = "ID of the uploaded dataset")
+            String fileId,
+
+            @ToolParam(description = "Python code to execute on the dataset")
+            String code) {
+
+        ExecuteRequest request = new ExecuteRequest(fileId, code);
         return pythonServiceClient.execute(request);
     }
-
     @Tool(description = "Search indexed documents semantically")
     public List<SearchResponse> searchDocuments(
             @ToolParam(description = "natural language search query") String query,
@@ -48,9 +55,38 @@ public class AgentTools {
         }
     }
 
-    @Tool(description = "Clean the uploaded dataset")
-    public CleanResponse cleanData(CleanRequest request) {
-        return pythonServiceClient.clean(request);
+    @Tool(description = "Clean an uploaded dataset")
+    public CleanResponse cleanData(
+
+            @ToolParam(description = "ID of the uploaded dataset")
+            String fileId,
+
+            @ToolParam(description = """
+                Cleaning operation.
+                Supported values:
+                drop_nulls,
+                fill_nulls,
+                cast_dtype,
+                dedupe
+                """)
+            String operation,
+
+            @ToolParam(description = "Column to operate on. Optional for dataset-wide operations.")
+            String column,
+
+            @ToolParam(description = """
+                Optional extra value required by some operations.
+                Examples:
+                - fill_nulls -> value to fill (0, Unknown, etc.)
+                - cast_dtype -> target type (int, float64, string)
+                Leave empty for operations that don't require it.
+                """)
+            String extraArg
+    ) {
+
+        return pythonServiceClient.clean(
+                new CleanRequest(fileId, operation, column, extraArg)
+        );
     }
 
     @Tool(description = "Index parsed document chunks")

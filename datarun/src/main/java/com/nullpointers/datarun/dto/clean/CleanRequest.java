@@ -8,5 +8,7 @@ public record CleanRequest(
 
         String operation,
 
-        String column) {
+        String column,
+        @JsonProperty("extra_arg")
+        String extraArg) {
 }

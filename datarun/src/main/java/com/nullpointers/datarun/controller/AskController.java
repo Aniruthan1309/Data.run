@@ -1,5 +1,7 @@
 package com.nullpointers.datarun.controller;
 
+import com.nullpointers.datarun.dto.index.IndexRequest;
+import com.nullpointers.datarun.dto.index.IndexResponse;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -29,4 +31,5 @@ public class AskController {
 
         return Map.of("answer", response);
     }
+
 }
