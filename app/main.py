@@ -5,6 +5,11 @@ from fastapi import HTTPException
 import fitz
 import pandas as pd
 import io
+from app.storage import FILES_DB
+from pydantic import BaseModel
+from typing import List
+from sentence_transformers import SentenceTransformer
+
 
 class CleanRequest(BaseModel):
     file_id: str
@@ -14,9 +19,49 @@ class CleanRequest(BaseModel):
 
 # This is the "app" that Uvicorn is looking for!
 app = FastAPI()
+# 1. Load the model globally (OUTSIDE the endpoint)
+# This takes a few seconds to load, so doing it here means it only happens 
+# once when the server starts, not every time a user makes a request.
+print("Loading Embedding Model...")
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+print("Model Loaded!")
 
+# 2. Define the exact JSON structure we expect from the orchestrator
+class Chunk(BaseModel):
+    file_id: str
+    page: int
+    text: str
+
+class EmbedRequest(BaseModel):
+    chunks: List[Chunk]
+
+# 3. Create the endpoint
+@app.post("/embed")
+async def generate_embeddings(request: EmbedRequest):
+    # Extract just the raw text from the incoming chunks
+    texts_to_embed = [chunk.text for chunk in request.chunks]
+    
+    # Generate the embeddings for all chunks simultaneously (batch processing is much faster)
+    # This returns a numpy array of vectors
+    vectors = embedding_model.encode(texts_to_embed)
+    
+    # 4. Map the vectors back to their original metadata
+    processed_chunks = []
+    for i, chunk in enumerate(request.chunks):
+        processed_chunks.append({
+            "file_id": chunk.file_id,
+            "page": chunk.page,
+            "text": chunk.text,
+            # Convert the numpy array to a standard Python list so FastAPI can turn it into JSON
+            "embedding": vectors[i].tolist() 
+        })
+        
+    return {
+        "message": f"Successfully embedded {len(processed_chunks)} chunks.",
+        "data": processed_chunks
+    }
+    
 # Temporary in-memory dictionary to store your loaded DataFrames
-FILES_DB: dict[str, pd.DataFrame] = {}
 
 # Your first required endpoint
 @app.post("/parse/csv")
@@ -33,38 +78,7 @@ async def parse_csv(file: UploadFile = File(...)):
         "row_count": len(df),
         "preview": df.head(5).to_dict(orient="records")
     }
-@app.post("/parse/pdf")
-async def parse_pdf(file: UploadFile = File(...)):
-    # 1. Read the raw binary bytes of the uploaded PDF
-    file_bytes = await file.read()
-    
-    # 2. Open the PDF entirely in memory using PyMuPDF
-    doc = fitz.open(stream=file_bytes, filetype="pdf")
-    
-    page_count = len(doc)
-    chunks = []
-    
-    # 3. Iterate through every page to extract the text
-    for page_num in range(page_count):
-        page = doc.load_page(page_num)
-        text = page.get_text("text").strip()
-        
-        # Only save the chunk if the page actually contains text
-        if text:
-            chunks.append({
-                "page": page_num + 1,  # 1-indexed for human readability
-                "text": text
-            })
-            
-    # 4. Generate a unique ID for this document session
-    file_id = str(id(doc))
-    
-    # 5. Return the exact JSON payload required by the team's API contract
-    return {
-        "file_id": file_id,
-        "page_count": page_count,
-        "chunks": chunks
-    }
+
 @app.post("/clean")
 async def clean_data(req: CleanRequest):
     # 1. Verify the file exists in memory
