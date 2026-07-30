@@ -32,11 +32,17 @@ public class PythonServiceClient {
 
     private final RestClient restClient;
 
-    public PythonServiceClient(
-            @Value("${pyservice.base-url}") String baseUrl) {
+    public PythonServiceClient(@Value("${pyservice.base-url}") String baseUrl) {
+        java.net.http.HttpClient jdkHttpClient = java.net.http.HttpClient.newBuilder()
+                .version(java.net.http.HttpClient.Version.HTTP_1_1)
+                .build();
+
+        org.springframework.http.client.JdkClientHttpRequestFactory requestFactory =
+                new org.springframework.http.client.JdkClientHttpRequestFactory(jdkHttpClient);
 
         this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
+                .requestFactory(requestFactory)
                 .build();
     }
 
@@ -61,24 +67,16 @@ public class PythonServiceClient {
     }
 
     public List<SearchResponse> search(SearchRequest request) {
-
         try {
-
-            log.info("Calling /search");
-
+            log.info("Calling /search with query='{}'", request.query());
             return restClient.post()
                     .uri("/search")
                     .body(request)
                     .retrieve()
                     .body(new ParameterizedTypeReference<List<SearchResponse>>() {});
-
-        } catch (RestClientException ex) {
-
-            throw new PythonServiceException(
-                    "Failed to call /search", ex);
-
+        } catch (Exception ex) {
+            throw new PythonServiceException("Failed to call /search", ex);
         }
-
     }
 
     private <T> T post(
