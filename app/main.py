@@ -1,19 +1,20 @@
-import uuid
 import io
+import subprocess
+import uuid
+
 import fitz
-from app.storage import CHUNKS_DB
-from app.storage import chroma_client
-from fastapi import FastAPI, UploadFile, File
-from pydantic import BaseModel
-from typing import Optional
-from fastapi import HTTPException
 import pandas as pd
-from app.storage import FILES_DB
-from typing import List
+from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
-from app.storage import vector_collection
-from typing import Optional
-from fastapi import Request
+from typing import List, Optional
+
+from app.storage import CHUNKS_DB, FILES_DB, chroma_client, vector_collection
+
+# 1. Define the exact JSON structure you expect from the frontend
+class ExecuteRequest(BaseModel):
+    language: str
+    code: str
 # Define the expected JSON body for the search request
 class SearchRequest(BaseModel):
     query: str
@@ -309,3 +310,31 @@ async def search_documents(request: SearchRequest):
             
     # 4. Return the payload
     return formatted_results
+def execute_code(req: ExecuteRequest) -> dict:
+    # Restrict execution to a specific language for safety
+    if req.language.lower() != "python":
+        raise HTTPException(status_code=400, detail="Only Python execution is supported.")
+    
+    try:
+        # Run the code in a separate process to catch outputs and crashes
+        # The 'timeout=3' prevents users from writing infinite loops (e.g., 'while True:')
+        result = subprocess.run(
+            ["python", "-c", req.code],
+            capture_output=True,
+            text=True,
+            timeout=3
+        )
+        
+        return {
+            "stdout": result.stdout,
+            "stderr": result.stderr,
+            "success": result.returncode == 0
+        }
+        
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=408, detail="Code execution timed out.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Execution error: {str(e)}")
+@app.post("/execute")
+def execute(req: ExecuteRequest):
+    return execute_code(req)
