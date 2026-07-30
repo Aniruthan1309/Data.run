@@ -8,7 +8,6 @@ import multiprocessing
 import queue
 
 import pandas as pd
-import matplotlib.pyplot as plt
 
 from app.chart import has_active_figure, figure_to_base64
 
@@ -67,30 +66,37 @@ def _execute_code(code, df, output_queue):
 
     stdout = io.StringIO()
 
+    import matplotlib
+    matplotlib.use("Agg")
+
+    import matplotlib.pyplot as plt
+
     local_vars = {
-    "df": df,
-    "pd": pd,
-    "plt": plt,
-    "np": np,
-    "math": math,
-}
+        "df": df,
+        "pd": pd,
+        "plt": plt,
+        "np": np,
+        "math": math,
+    }
 
     chart = None
 
     try:
         validate_code(code)
         with contextlib.redirect_stdout(stdout):
+
+            print("Before exec")
             exec(code, {"__builtins__": SAFE_BUILTINS}, local_vars)
+            print("After exec")
 
         output = stdout.getvalue()
 
-        if "result" in local_vars:
-            if output:
-                output += "\n"
-            output += str(local_vars["result"])
+        print("Figures:", plt.get_fignums())
 
-        if has_active_figure():
-            chart = figure_to_base64()
+        if has_active_figure(plt):
+            print("Encoding figure")
+            chart = figure_to_base64(plt)
+            print("Figure encoded")
 
         output_queue.put({
             "stdout": output if output else None,
@@ -98,13 +104,13 @@ def _execute_code(code, df, output_queue):
             "error": None,
         })
 
-    except Exception:
+    except Exception as e:
         plt.close("all")
 
         output_queue.put({
             "stdout": None,
             "chartBase64": None,
-            "error": traceback.format_exc(),
+            "error": str(e),
         })
 def run_python(code: str, df: pd.DataFrame):
 
