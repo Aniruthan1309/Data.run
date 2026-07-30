@@ -13,6 +13,7 @@ from typing import List
 from sentence_transformers import SentenceTransformer
 from app.storage import vector_collection
 from typing import Optional
+from fastapi import Request
 # Define the expected JSON body for the search request
 class SearchRequest(BaseModel):
     query: str
@@ -307,7 +308,4 @@ async def search_documents(request: SearchRequest):
             })
             
     # 4. Return the payload
-    return {
-        "query": request.query,
-        "results": formatted_results
-    }
+    return formatted_results
