@@ -20,7 +20,7 @@ public class ChatConfig {
 
     @Bean
     public ChatClient chatClient(ChatClient.Builder builder, AgentTools agentTools,
-                                 ChatMemory chatMemory,@Value("classpath:/prompts/system-message.st")
+                                 ChatMemory chatMemory,@Value("classpath:/templates/prompts/system-message.st")
                                      Resource systemPrompt){
         return builder.defaultTools(agentTools)
                 .defaultAdvisors(MessageChatMemoryAdvisor.builder(chatMemory).build())

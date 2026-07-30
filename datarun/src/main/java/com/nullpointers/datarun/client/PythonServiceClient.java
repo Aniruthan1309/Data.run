@@ -70,7 +70,7 @@ public class PythonServiceClient {
                     .uri("/search")
                     .body(request)
                     .retrieve()
-                    .body(new ParameterizedTypeReference<>() {});
+                    .body(new ParameterizedTypeReference<List<SearchResponse>>() {});
 
         } catch (RestClientException ex) {
 
