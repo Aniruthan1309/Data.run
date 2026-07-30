@@ -5,6 +5,6 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 public record SearchResponse(
         String text,
         String file_id,
-        Integer  page,
+        Integer page,
         double distance
 ) {}
