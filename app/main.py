@@ -1,15 +1,26 @@
+import uuid
+import io
+import fitz
+from app.storage import CHUNKS_DB
+from app.storage import chroma_client
 from fastapi import FastAPI, UploadFile, File
 from pydantic import BaseModel
 from typing import Optional
 from fastapi import HTTPException
-import fitz
 import pandas as pd
-import io
 from app.storage import FILES_DB
-from pydantic import BaseModel
 from typing import List
 from sentence_transformers import SentenceTransformer
+from app.storage import vector_collection
+from typing import Optional
+# Define the expected JSON body for the search request
+class SearchRequest(BaseModel):
+    query: str
+    top_k: Optional[int] = 5  # Default to returning the top 5 chunks if not specified
 
+# Define the expected JSON body for the request
+class IndexRequest(BaseModel):
+    file_id: str
 
 class CleanRequest(BaseModel):
     file_id: str
@@ -37,28 +48,41 @@ class EmbedRequest(BaseModel):
 
 # 3. Create the endpoint
 @app.post("/embed")
-async def generate_embeddings(request: EmbedRequest):
-    # Extract just the raw text from the incoming chunks
+async def generate_and_store_embeddings(request: EmbedRequest):
+    # 1. Generate the embeddings (Phase 8)
     texts_to_embed = [chunk.text for chunk in request.chunks]
-    
-    # Generate the embeddings for all chunks simultaneously (batch processing is much faster)
-    # This returns a numpy array of vectors
     vectors = embedding_model.encode(texts_to_embed)
     
-    # 4. Map the vectors back to their original metadata
-    processed_chunks = []
+    # 2. Prepare the lists required by ChromaDB (Phase 9)
+    ids = []
+    documents = []
+    embeddings = []
+    metadatas = []
     for i, chunk in enumerate(request.chunks):
-        processed_chunks.append({
+        # uuid4 generates a randomized, guaranteed-unique ID string for every chunk
+        chunk_id = str(uuid.uuid4())
+        
+        ids.append(chunk_id)
+        documents.append(chunk.text)
+        embeddings.append(vectors[i].tolist())
+        
+        # We store 'file_id' and 'page' in the metadata dictionary
+        # This allows you to filter searches later (e.g., "only search file 123")
+        metadatas.append({
             "file_id": chunk.file_id,
-            "page": chunk.page,
-            "text": chunk.text,
-            # Convert the numpy array to a standard Python list so FastAPI can turn it into JSON
-            "embedding": vectors[i].tolist() 
+            "page": chunk.page
         })
         
+    # 3. Insert everything into the vector database at once
+    vector_collection.add(
+        ids=ids,
+        documents=documents,
+        embeddings=embeddings,
+        metadatas=metadatas
+    )
+        
     return {
-        "message": f"Successfully embedded {len(processed_chunks)} chunks.",
-        "data": processed_chunks
+        "message": f"Successfully embedded and stored {len(ids)} chunks in ChromaDB."
     }
     
 # Temporary in-memory dictionary to store your loaded DataFrames
@@ -202,4 +226,88 @@ async def parse_pdf(file: UploadFile = File(...)):
         "file_id": file_id,
         "page_count": page_count,
         "chunks": chunks
+    }
+
+
+
+@app.post("/index")
+async def index_document(request: IndexRequest):
+    file_id = request.file_id
+    
+    # 1. Get stored chunks
+    if file_id not in CHUNKS_DB:
+        return {"error": f"No chunks found for file_id: {file_id}"}
+        
+    chunks = CHUNKS_DB[file_id]
+    
+    # 2. Embed the text
+    texts_to_embed = [chunk["text"] for chunk in chunks]
+    vectors = embedding_model.encode(texts_to_embed)
+    
+    # 3. Prepare data for ChromaDB
+    ids = []
+    documents = []
+    embeddings = []
+    metadatas = []
+    
+    for i, chunk in enumerate(chunks):
+        ids.append(str(uuid.uuid4()))
+        documents.append(chunk["text"])
+        embeddings.append(vectors[i].tolist())
+        metadatas.append({
+            "file_id": file_id,
+            "page": chunk["page"]
+        })
+        
+    # 4. Insert into Chroma
+    vector_collection.add(
+        ids=ids,
+        documents=documents,
+        embeddings=embeddings,
+        metadatas=metadatas
+    )
+    
+    # Optional clean-up: clear the chunks from RAM now that they are in the database
+    del CHUNKS_DB[file_id]
+    
+    # 5. Return the exact required JSON contract
+    return {
+        "indexed_count": len(ids)
+    }
+
+@app.post("/search")
+async def search_documents(request: SearchRequest):
+    # 1. Embed the query
+    # We pass it as a list and extract the first item because .encode() expects a list of strings
+    query_vector = embedding_model.encode([request.query])[0].tolist()
+    
+    # 2. Search Chroma
+    # We ask Chroma to find the mathematical nearest neighbors to our query vector
+    results = vector_collection.query(
+        query_embeddings=[query_vector],
+        n_results=request.top_k
+    )
+    
+    # 3. Format the Top K results
+    formatted_results = []
+    
+    # Chroma returns lists of lists (because it supports batch querying).
+    # We grab index [0] to get the results for our single query.
+    if results["documents"] and len(results["documents"][0]) > 0:
+        docs = results["documents"][0]
+        metas = results["metadatas"][0]
+        distances = results["distances"][0] # Lower distance = better match
+        
+        for i in range(len(docs)):
+            formatted_results.append({
+                "text": docs[i],
+                "file_id": metas[i].get("file_id"),
+                "page": metas[i].get("page"),
+                "distance": distances[i]
+            })
+            
+    # 4. Return the payload
+    return {
+        "query": request.query,
+        "results": formatted_results
     }
