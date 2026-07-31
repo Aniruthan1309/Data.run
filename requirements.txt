@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pandas
+matplotlib
+numpy
+python-multipart
+pydantic
+sentence-transformers
+chromadb
+PyMuPDF
+qdrant-client
+requests
