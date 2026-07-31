@@ -34,3 +34,6 @@ target/
 .claude-replay.*
 .tmp-*
 logs/
+
+chroma_data/
+*.sqlite3

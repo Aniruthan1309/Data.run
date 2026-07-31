@@ -597,6 +597,9 @@ function ModuleIngestion({
 }) {
   const [dragging, setDragging] = useState(false)
   const [cleanLoading, setCleanLoading] = useState<CleanOp | null>(null)
+  const [castColumn, setCastColumn] = useState('')
+  const [castDtype, setCastDtype] = useState('float64')
+  const [showCastInputs, setShowCastInputs] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const handleFiles = async (dropped: File[]) => {
@@ -671,11 +674,10 @@ function ModuleIngestion({
     }
   }
 
-  const handleClean = async (op: CleanOp) => {
+  const handleClean = async (op: CleanOp, col?: string, dtype?: string) => {
     if (!selectedFile) return
     setCleanLoading(op)
     const t0 = Date.now()
-    // map frontend op names to backend operation names
     const opMap: Record<CleanOp, string> = {
       drop_nulls: 'drop_nulls',
       fill_nulls: 'fill_nulls',
@@ -683,8 +685,9 @@ function ModuleIngestion({
       cast_types: 'cast_dtype',
     }
     try {
-      const data = await cleanData(selectedFile.id, opMap[op])
+      const data = await cleanData(selectedFile.id, opMap[op], col || undefined, dtype || undefined)
       addToast(`[POST /clean 200 OK - ${Date.now() - t0}ms] ${data.summary}`, 'ok')
+      setShowCastInputs(false)
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err)
       addToast(`[ERROR] Clean failed: ${msg}`, 'err')
@@ -945,13 +948,18 @@ function ModuleIngestion({
             {cleanOps.map(({ op, label, desc }) => (
               <button
                 key={op}
-                onClick={() => handleClean(op)}
-                disabled={!selectedFile || cleanLoading !== null}
+                onClick={() => {
+                  if (op === 'cast_types') { setShowCastInputs((v) => !v); return }
+                  handleClean(op)
+                }}
+                disabled={!selectedFile || (cleanLoading !== null && cleanLoading !== op)}
                 title={desc}
                 className={`flex items-center justify-center gap-1.5 px-3 py-2 rounded border text-xs font-mono transition-all ${
                   cleanLoading === op
                     ? 'border-lime-400/40 bg-lime-400/10 text-lime-400'
-                    : 'border-zinc-700/60 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 disabled:opacity-30 disabled:cursor-not-allowed'
+                    : op === 'cast_types' && showCastInputs
+                      ? 'border-blue-400/40 bg-blue-400/10 text-blue-400'
+                      : 'border-zinc-700/60 bg-zinc-900 text-zinc-400 hover:border-zinc-600 hover:text-zinc-200 disabled:opacity-30 disabled:cursor-not-allowed'
                 }`}
               >
                 {cleanLoading === op && <span className="animate-spin inline-block">◐</span>}
@@ -959,6 +967,37 @@ function ModuleIngestion({
               </button>
             ))}
           </div>
+          {/* Cast Types inline inputs */}
+          {showCastInputs && (
+            <div className="mt-2 p-3 rounded border border-blue-400/20 bg-blue-400/5 space-y-2">
+              <p className="text-xs font-mono text-blue-400">Cast column to dtype</p>
+              <div className="flex gap-2">
+                <input
+                  value={castColumn}
+                  onChange={(e) => setCastColumn(e.target.value)}
+                  placeholder="Column name"
+                  className="flex-1 bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500 transition-colors"
+                />
+                <select
+                  value={castDtype}
+                  onChange={(e) => setCastDtype(e.target.value)}
+                  className="bg-zinc-900 border border-zinc-700 rounded px-2 py-1.5 text-xs font-mono text-zinc-200 focus:outline-none focus:border-zinc-500 transition-colors"
+                >
+                  {['float64', 'int64', 'int32', 'str', 'bool', 'datetime64'].map((d) => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+              <button
+                onClick={() => handleClean('cast_types', castColumn, castDtype)}
+                disabled={!castColumn.trim() || cleanLoading !== null}
+                className="w-full flex items-center justify-center gap-1.5 px-3 py-1.5 rounded border border-blue-400/30 bg-blue-400/10 text-blue-400 text-xs font-mono hover:bg-blue-400/20 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                {cleanLoading === 'cast_types' && <span className="animate-spin">◐</span>}
+                Apply Cast
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Endpoint reference */}
@@ -992,7 +1031,7 @@ function ModuleIngestion({
 
 // --- Module 2: Chat & Agent Workspace ---
 
-function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => void }) {
+function ModuleChat({ addToast, files }: { addToast: (msg: string, kind: ToastKind) => void; files: ParsedFile[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>(MOCK_MESSAGES)
   const [steps, setSteps] = useState<ToolStep[]>(MOCK_STEPS)
   const [input, setInput] = useState('')
@@ -1100,21 +1139,6 @@ function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => 
     } finally {
       setSending(false)
     }
-  }Messages((prev) =>
-        prev.map((m) =>
-          m.id === thinkingId
-            ? {
-                ...m,
-                thinking: false,
-                content: `Based on the indexed knowledge, I found **${Math.floor(Math.random() * 4 + 2)} relevant chunks** matching your query.\n\nThe most relevant passage scores Δ 0.14 against your query vector. No Python execution was required — this was a pure retrieval task.\n\n**Confidence**: High  ·  **Avg. distance**: 0.21  ·  **Sources**: 2 files`,
-                citations: [{ file: 'technical_architecture_v3.pdf', page: 22 }],
-              }
-            : m,
-        ),
-      )
-      setSending(false)
-      addToast(`[POST /api/ask 200 OK - ${Math.floor(Math.random() * 200 + 100)}ms]`, 'ok')
-    }, 2200)
   }
 
   return (
@@ -1257,6 +1281,30 @@ function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => 
           <span className="text-xs font-mono text-zinc-600">{steps.length} steps</span>
         </div>
 
+        {/* Uploaded Files context */}
+        <div className="px-3 py-2.5 border-b border-zinc-800/50 bg-zinc-950/30 flex-shrink-0">
+          <span className="text-xs font-mono text-zinc-600 block mb-1.5">Knowledge Context</span>
+          {files.filter(f => f.status === 'done').length > 0 ? (
+            <div className="flex flex-wrap gap-1">
+              {files.filter(f => f.status === 'done').map((f) => (
+                <span
+                  key={f.id}
+                  title={`ID: ${f.id}`}
+                  className={`inline-flex items-center gap-1 text-xs font-mono px-1.5 py-0.5 rounded border ${
+                    f.type === 'csv'
+                      ? 'bg-emerald-400/8 border-emerald-400/20 text-emerald-400'
+                      : 'bg-blue-400/8 border-blue-400/20 text-blue-400'
+                  }`}
+                >
+                  {f.type === 'csv' ? '⊞' : '⊟'} {f.name}
+                </span>
+              ))}
+            </div>
+          ) : (
+            <span className="text-xs font-mono text-zinc-700">No files indexed — upload in Ingestion tab</span>
+          )}
+        </div>
+
         <div className="flex-1 overflow-y-auto p-3 space-y-2 hide-scrollbar">
           {steps.map((step, idx) => (
             <div key={step.id} className="rounded border border-zinc-800 bg-zinc-900/30 overflow-hidden">
@@ -1337,9 +1385,11 @@ function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => 
 function ModuleSearch({
   onSwitchToSearch,
   addToast,
+  files,
 }: {
   onSwitchToSearch: () => void
   addToast: (msg: string, kind: ToastKind) => void
+  files: ParsedFile[]
 }) {
   const [query, setQuery] = useState('')
   const [topK, setTopK] = useState(5)
@@ -1425,7 +1475,33 @@ function ModuleSearch({
           </button>
         </div>
 
-        <div className="flex items-center gap-6 flex-wrap">
+          {/* Uploaded files context */}
+          {files.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-xs font-mono text-zinc-700">Indexed:</span>
+              {files.filter(f => f.status === 'done').map((f) => (
+                <span
+                  key={f.id}
+                  title={f.id}
+                  className={`inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded border ${
+                    f.type === 'csv'
+                      ? 'bg-emerald-400/8 border-emerald-400/20 text-emerald-400'
+                      : 'bg-blue-400/8 border-blue-400/20 text-blue-400'
+                  }`}
+                >
+                  {f.type === 'csv' ? '⊞' : '⊟'} {f.name}
+                </span>
+              ))}
+              {files.filter(f => f.status === 'done').length === 0 && (
+                <span className="text-xs font-mono text-zinc-700">No files indexed yet — upload in Ingestion tab</span>
+              )}
+            </div>
+          )}
+          {files.length === 0 && (
+            <span className="text-xs font-mono text-zinc-700">No files indexed yet — upload in the Ingestion tab first</span>
+          )}
+
+          <div className="flex items-center gap-6 flex-wrap">
           {/* Top-K */}
           <div className="flex items-center gap-2.5">
             <span className="text-xs font-mono text-zinc-500">Top-K</span>
@@ -1687,8 +1763,9 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
                 </button>
               </div>
             </div>
+          </div>
 
-            <div           {/* Terminal */}
+          {/* Terminal */}
           <div className="bg-[#050507] flex flex-col min-h-0 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/60 flex-shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1752,31 +1829,7 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
                 </div>
               )}
             </div>
-          </div>                       ? 'text-zinc-600'
-                                : line.includes('chart:base64:')
-                                  ? 'text-purple-400'
-                                  : 'text-zinc-400'
-                      }
-                    >
-                      {line || ' '}
-                    </div>
-                  ))}
-                  {running && (
-                    <span className="inline-block w-2 h-4 bg-lime-400 animate-pulse" />
-                  )}
-                </div>
-              ) : (
-                <div className="h-full flex items-center justify-center">
-                  <p className="text-xs font-mono text-zinc-700">
-                    Press{' '}
-                    <kbd className="px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-600 mx-1">
-                      Ctrl+Enter
-                    </kbd>{' '}
-                    or click Run to execute
-                  </p>
-                </div>
-              )}
-            </div>
+
           </div>
         </div>
       ) : (
@@ -1964,9 +2017,9 @@ export default function App() {
         {activeTab === 'ingest' && (
           <ModuleIngestion files={files} setFiles={setFiles} addToast={addToast} />
         )}
-        {activeTab === 'chat' && <ModuleChat addToast={addToast} />}
+        {activeTab === 'chat' && <ModuleChat addToast={addToast} files={files} />}
         {activeTab === 'search' && (
-          <ModuleSearch onSwitchToSearch={switchToSearch} addToast={addToast} />
+          <ModuleSearch onSwitchToSearch={switchToSearch} addToast={addToast} files={files} />
         )}
         {activeTab === 'sandbox' && <ModuleSandbox addToast={addToast} />}
       </div>

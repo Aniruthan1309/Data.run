@@ -1,66 +1,135 @@
-Note for Evaluators:
-This repository uses a branch-based development workflow. Individual features (such as document upload, search, indexing, data cleaning, and other components) have been developed and tested in separate feature branches. The main branch may not yet contain all completed work. 
-
 # Data.run
 
 An AI-powered analytics agent that combines semantic document retrieval and Python-based data analysis to answer natural language queries over CSV and PDF files.
 
-## 🚀 Features
+---
 
-- **CSV analysis**: Powerful data manipulation and insights using Pandas.
-- **PDF semantic search**: Deep search capabilities across document contents.
-- **Natural language querying**: Ask questions in plain English and get data-driven answers.
-- **Hybrid retrieval + computation**: Merges vector search with on-the-fly Python analytics.
-- **Interactive visualizations**: Auto-generated charts and graphs using Matplotlib.
-- **Modern React UI**: A sleek, responsive frontend for an optimal user experience.
+## Features
 
-## 🛠️ Tech Stack
+| Module | Description |
+|---|---|
+| **Ingestion & Profiling** | Upload CSV/PDF files; real-time schema extraction, row counts, and auto-embedding of PDF chunks |
+| **Cast Types** | Inline column + dtype selector for casting specific columns (float64, int64, str, bool, datetime64) |
+| **RAG Search** | Semantic vector search over indexed PDFs via ChromaDB; shows uploaded files as context badges |
+| **Agent Workspace** | Chat interface wired to real `/search`; Knowledge Context panel shows all indexed files |
+| **Python Sandbox** | Execute real Python code against uploaded DataFrames; renders stdout and Matplotlib charts |
 
-### Frontend
-- **React** & **Vite**: For a fast, modern component-based UI.
-- **TailwindCSS**: For rapid, responsive, and highly customizable styling.
+---
 
-### Backend
-- **Spring Boot** & **Spring AI**: Robust Java framework orchestrating the AI logic.
-- **Python** & **FastAPI**: High-performance API for data processing.
-- **Pandas**: Core library for tabular data analytics.
-- **Sentence Transformers**: Generating embeddings for semantic search.
-- **Qdrant**: High-performance vector database for storing and querying embeddings.
-- **Matplotlib**: For generating data visualizations on the backend.
+## Tech Stack
 
-## 📁 Project Structure
+| Layer | Technology |
+|---|---|
+| **Backend** | Python · FastAPI · Uvicorn |
+| **Embeddings** | Sentence Transformers (`all-MiniLM-L6-v2`) |
+| **Vector DB** | ChromaDB |
+| **PDF Parsing** | PyMuPDF (fitz) |
+| **Data Analysis** | Pandas · Matplotlib |
+| **Frontend** | React 18 · TypeScript · Vite · Tailwind CSS |
+| **Java Orchestrator** | Spring Boot · Spring AI *(separate branch)* |
 
-- **`/` (Root)**: Contains the React frontend application.
-- **`/Data.run`**: Contains the backend services, Python scripts, and Spring Boot application.
+---
 
-## ⚙️ Setup Instructions
+## Project Structure
 
-### 1. Frontend Setup
-Make sure you have Node.js installed. From the root directory:
+```
+mainfinal/
+├── app/
+│   ├── main.py          # FastAPI application & all endpoints
+│   ├── executor.py      # Python sandbox execution engine
+│   ├── models.py        # Pydantic request/response models
+│   └── storage.py       # In-memory DataFrame + chunk stores
+├── frontend/
+│   ├── src/
+│   │   ├── App.tsx      # Full React application (Ingestion, Chat, Search, Sandbox)
+│   │   └── api.ts       # Typed API client for all backend endpoints
+│   ├── vite.config.ts   # Vite config with /api proxy to :8000
+│   └── package.json
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## API Endpoints
+
+| Method | Route | Description |
+|---|---|---|
+| `POST` | `/parse/csv` | Upload & parse a CSV; returns schema + preview |
+| `POST` | `/parse/pdf` | Upload & parse a PDF; returns text chunks |
+| `POST` | `/embed` | Embed chunks into ChromaDB vector store |
+| `POST` | `/clean` | Clean a DataFrame (drop_nulls, fill_nulls, dedupe, cast_dtype) |
+| `POST` | `/search` | Semantic search over indexed chunks |
+| `POST` | `/execute` | Execute Python code against a stored DataFrame |
+
+---
+
+## Getting Started
+
+### 1. Backend
+
 ```bash
 # Install dependencies
+pip install -r requirements.txt
+
+# Start the FastAPI server
+uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+API docs available at: **http://localhost:8000/docs**
+
+### 2. Frontend
+
+```bash
+cd frontend
+
+# Install Node dependencies (first time only)
 npm install
 
-# Start the development server
+# Start the dev server
 npm run dev
 ```
 
-### 2. Backend Setup
-Navigate into the backend directory to set up the Python and Spring Boot services.
-```bash
-cd Data.run
+Frontend available at: **http://localhost:8443**
 
-# (Optional) Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
+> The Vite dev server proxies `/api/*` requests to `http://localhost:8000`.
 
-# Install Python requirements
-pip install -r requirements.txt
+---
+
+## Usage Guide
+
+1. **Ingest** — Go to the **Ingestion** tab and drag-and-drop a `.csv` or `.pdf` file.
+   - CSVs are parsed and stored as DataFrames.
+   - PDFs are chunked and automatically embedded into the vector store.
+   - Copy the `file_id` from the file card for use in the Sandbox.
+
+2. **Clean** — Use the cleaning panel (drop nulls, fill nulls, dedupe). For **Cast Types**, click the button to reveal column name and dtype inputs.
+
+3. **Search** — Switch to the **RAG Search** tab and enter a natural language query. The uploaded files appear as context badges above the search controls.
+
+4. **Chat** — The **Agent Workspace** sends queries to the real `/search` endpoint and displays matching chunks. The right panel shows all indexed files under *Knowledge Context*.
+
+5. **Sandbox** — Go to the **Python Sandbox** tab, paste the `file_id` into the field, write Python code (using `df` as the variable), and press `Ctrl+Enter` or click Run. Real stdout and Matplotlib charts are rendered.
+
+---
+
+## Requirements
+
 ```
-*Note: Make sure to start both the Python FastAPI server and the Spring Boot application as per the backend's specific startup instructions.*
+fastapi
+uvicorn[standard]
+pandas
+sentence-transformers
+chromadb
+pymupdf
+matplotlib
+pydantic
+requests
+qdrant-client
+```
 
-## 💡 How It Works
-1. **Upload Data**: Users upload CSVs or PDFs through the modern React interface.
-2. **Process & Index**: The backend chunks documents and uses Sentence Transformers to store embeddings in Qdrant.
-3. **Query**: When a natural language question is asked, the Spring AI orchestrator determines if it requires semantic search (PDF) or data manipulation (CSV/Pandas).
-4. **Visualize**: Results and Matplotlib-generated charts are seamlessly returned to the frontend.
+---
+
+## License
+
+MIT
