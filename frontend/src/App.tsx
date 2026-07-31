@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { parseCSV, parsePDF, cleanData, searchDocs, executeCode, embedChunks, SearchResult } from './api'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -596,60 +597,100 @@ function ModuleIngestion({
 }) {
   const [dragging, setDragging] = useState(false)
   const [cleanLoading, setCleanLoading] = useState<CleanOp | null>(null)
-  const [uploadingId, setUploadingId] = useState<string | null>(null)
-  const [uploadedIds, setUploadedIds] = useState<Set<string>>(new Set())
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const uploadToBackend = (file: ParsedFile) => {
-    if (uploadingId || uploadedIds.has(file.id)) return
-    setUploadingId(file.id)
-    const ms = Math.floor(Math.random() * 300 + 120)
-    setTimeout(() => {
-      setUploadingId(null)
-      setUploadedIds((prev) => new Set([...prev, file.id]))
-      addToast(`[POST /ingest/${file.type} 200 OK - ${ms}ms] ${file.id} indexed`, 'ok')
-    }, ms + 800)
-  }
-
-  const simulateParse = (dropped: File[]) => {
+  const handleFiles = async (dropped: File[]) => {
     if (!dropped.length) return
     const f = dropped[0]
     const isCSV = f.name.toLowerCase().endsWith('.csv')
-    const newFile: ParsedFile = {
-      id: 'file_' + Math.random().toString(36).slice(2, 10),
+    const placeholderId = 'file_' + Math.random().toString(36).slice(2, 10)
+    const placeholder: ParsedFile = {
+      id: placeholderId,
       name: f.name,
       type: isCSV ? 'csv' : 'pdf',
       size: `${(f.size / 1048576).toFixed(1)} MB`,
-      rows: isCSV ? Math.floor(Math.random() * 6000 + 800) : undefined,
-      pages: !isCSV ? Math.floor(Math.random() * 80 + 15) : undefined,
-      cols: isCSV
-        ? [
-            { name: 'id', dtype: 'str' },
-            { name: 'value', dtype: 'float64' },
-            { name: 'label', dtype: 'str' },
-          ]
-        : undefined,
-      nullPct: parseFloat((Math.random() * 6).toFixed(1)),
-      typeMismatches: Math.floor(Math.random() * 18),
-      dupeRows: Math.floor(Math.random() * 80),
+      nullPct: 0,
+      typeMismatches: 0,
+      dupeRows: 0,
       status: 'parsing',
     }
-    setFiles((prev) => [newFile, ...prev])
-    setTimeout(() => {
-      setFiles((prev) =>
-        prev.map((file) => (file.id === newFile.id ? { ...file, status: 'done' } : file)),
-      )
-      addToast(`[POST /parse/${newFile.type} 200 OK - ${Math.floor(Math.random() * 400 + 150)}ms]`, 'ok')
-    }, 1600)
+    setFiles((prev) => [placeholder, ...prev])
+
+    const t0 = Date.now()
+    try {
+      if (isCSV) {
+        const data = await parseCSV(f)
+        const ms = Date.now() - t0
+        setFiles((prev) =>
+          prev.map((file) =>
+            file.id === placeholderId
+              ? {
+                  ...file,
+                  id: data.file_id,
+                  rows: data.row_count,
+                  cols: data.columns,
+                  nullPct: 0,
+                  typeMismatches: 0,
+                  dupeRows: 0,
+                  status: 'done',
+                }
+              : file,
+          ),
+        )
+        addToast(`[POST /parse/csv 200 OK - ${ms}ms] ${data.file_id}`, 'ok')
+      } else {
+        const data = await parsePDF(f)
+        const ms = Date.now() - t0
+        setFiles((prev) =>
+          prev.map((file) =>
+            file.id === placeholderId
+              ? {
+                  ...file,
+                  id: data.file_id,
+                  pages: data.page_count,
+                  nullPct: 0,
+                  typeMismatches: 0,
+                  dupeRows: 0,
+                  status: 'done',
+                }
+              : file,
+          ),
+        )
+        addToast(`[POST /parse/pdf 200 OK - ${ms}ms] ${data.file_id} · ${data.chunks.length} chunks`, 'ok')
+        // Auto-embed chunks into the vector store
+        if (data.chunks.length > 0) {
+          const t1 = Date.now()
+          await embedChunks(data.chunks)
+          addToast(`[POST /embed 200 OK - ${Date.now() - t1}ms] ${data.chunks.length} chunks indexed`, 'ok')
+        }
+      }
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setFiles((prev) => prev.filter((file) => file.id !== placeholderId))
+      addToast(`[ERROR] Parse failed: ${msg}`, 'err')
+    }
   }
 
-  const handleClean = (op: CleanOp) => {
-    if (!files.length) return
+  const handleClean = async (op: CleanOp) => {
+    if (!selectedFile) return
     setCleanLoading(op)
-    setTimeout(() => {
+    const t0 = Date.now()
+    // map frontend op names to backend operation names
+    const opMap: Record<CleanOp, string> = {
+      drop_nulls: 'drop_nulls',
+      fill_nulls: 'fill_nulls',
+      dedupe: 'dedupe',
+      cast_types: 'cast_dtype',
+    }
+    try {
+      const data = await cleanData(selectedFile.id, opMap[op])
+      addToast(`[POST /clean 200 OK - ${Date.now() - t0}ms] ${data.summary}`, 'ok')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      addToast(`[ERROR] Clean failed: ${msg}`, 'err')
+    } finally {
       setCleanLoading(null)
-      addToast(`[POST /clean?op=${op} 200 OK - ${Math.floor(Math.random() * 100 + 40)}ms]`, 'ok')
-    }, 1100)
+    }
   }
 
   const selectedFile = files.find((f) => f.type === 'csv' && f.status === 'done') ?? files[0]
@@ -669,7 +710,7 @@ function ModuleIngestion({
         <div
           onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
           onDragLeave={() => setDragging(false)}
-          onDrop={(e) => { e.preventDefault(); setDragging(false); simulateParse(Array.from(e.dataTransfer.files)) }}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); handleFiles(Array.from(e.dataTransfer.files)) }}
           onClick={() => fileRef.current?.click()}
           className={`relative flex flex-col items-center justify-center gap-3 rounded border-2 border-dashed py-10 px-6 cursor-pointer transition-all ${
             dragging
@@ -682,7 +723,7 @@ function ModuleIngestion({
             type="file"
             accept=".csv,.pdf"
             className="hidden"
-            onChange={(e) => simulateParse(Array.from(e.target.files ?? []))}
+            onChange={(e) => handleFiles(Array.from(e.target.files ?? []))}
           />
           <div
             className={`w-10 h-10 rounded-lg flex items-center justify-center border transition-colors ${
@@ -785,42 +826,14 @@ function ModuleIngestion({
                     </div>
                   )}
 
-                  {/* Upload to backend */}
+                  {/* Parsed badge */}
                   <div className="pt-3 border-t border-zinc-800/60">
-                    {uploadedIds.has(file.id) ? (
-                      <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
-                        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 14 14" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M2 7l4 4 6-6" />
-                        </svg>
-                        Uploaded to backend · {file.id}
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => uploadToBackend(file)}
-                        disabled={uploadingId !== null}
-                        className={`flex items-center gap-2 px-3 py-1.5 rounded border text-xs font-mono transition-all ${
-                          uploadingId === file.id
-                            ? 'border-lime-400/30 bg-lime-400/8 text-lime-400 cursor-wait'
-                            : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200 hover:bg-zinc-800/60 disabled:opacity-40 disabled:cursor-not-allowed'
-                        }`}
-                      >
-                        {uploadingId === file.id ? (
-                          <>
-                            <span className="animate-spin inline-block">◐</span>
-                            Uploading to backend…
-                          </>
-                        ) : (
-                          <>
-                            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 14 14" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 9V3m0 0L4.5 5.5M7 3l2.5 2.5" />
-                              <path strokeLinecap="round" strokeWidth={1.5} d="M2 11h10" />
-                            </svg>
-                            Upload to Backend
-                            <span className="text-zinc-600 ml-1">POST /ingest/{file.type}</span>
-                          </>
-                        )}
-                      </button>
-                    )}
+                    <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
+                      <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 14 14" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.6} d="M2 7l4 4 6-6" />
+                      </svg>
+                      Parsed &amp; stored in backend · {file.id}
+                    </div>
                   </div>
                 </>
               )}
@@ -977,7 +990,7 @@ function ModuleIngestion({
   )
 }
 
-// ─── Module 2: Chat & Agent Workspace ───────────────────────────────────────────
+// --- Module 2: Chat & Agent Workspace ---
 
 function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => void }) {
   const [messages, setMessages] = useState<ChatMessage[]>(MOCK_MESSAGES)
@@ -998,7 +1011,7 @@ function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => 
       return next
     })
 
-  const sendMessage = () => {
+  const sendMessage = async () => {
     if (!input.trim() || sending) return
     const userMsg: ChatMessage = {
       id: 'u_' + Date.now(),
@@ -1018,23 +1031,76 @@ function ModuleChat({ addToast }: { addToast: (msg: string, kind: ToastKind) => 
     setInput('')
     setSending(true)
 
+    const stepId = 'ns_' + Date.now()
     const newStep: ToolStep = {
-      id: 'ns_' + Date.now(),
+      id: stepId,
       tool: 'searchDocuments',
       status: 'running',
       durationMs: 0,
-      payload: `{"query":"${userMsg.content.slice(0, 60).replace(/"/g, '\\"')}","topK":5}`,
+      payload: JSON.stringify({ query: userMsg.content.slice(0, 80), topK: 5 }),
       responseCode: 0,
       timestamp: new Date().toLocaleTimeString('en-US', { hour12: false }),
     }
     setSteps((prev) => [...prev, newStep])
 
-    setTimeout(() => {
-      const dur = Math.floor(Math.random() * 60 + 20)
+    const t0 = Date.now()
+    try {
+      // Step 1: Real semantic search via /search
+      const results = await searchDocs(userMsg.content, 5)
+      const dur = Date.now() - t0
       setSteps((prev) =>
-        prev.map((s) => (s.id === newStep.id ? { ...s, status: 'done', durationMs: dur, responseCode: 200 } : s)),
+        prev.map((s) =>
+          s.id === stepId ? { ...s, status: 'done', durationMs: dur, responseCode: 200 } : s,
+        ),
+      )
+
+      // Step 2: Synthesize a response from search results (orchestrator not available, summarize locally)
+      const topChunks = results.slice(0, 3)
+      const avgDist = topChunks.length
+        ? (topChunks.reduce((a, r) => a + r.distance, 0) / topChunks.length).toFixed(3)
+        : 'N/A'
+      const sources = [...new Set(topChunks.map((r) => r.file_id ?? 'unknown'))]
+      const snippets = topChunks
+        .map((r, i) => `**[${i + 1}]** (Δ ${r.distance.toFixed(3)}) ${r.text.slice(0, 200)}…`)
+        .join('\n\n')
+
+      const responseContent =
+        topChunks.length > 0
+          ? `Found **${results.length} relevant chunks** from the vector index.\n\n${snippets}\n\n**Avg. distance**: ${avgDist}  ·  **Sources**: ${sources.join(', ')}`
+          : `No indexed content found matching your query. Upload and index a PDF or CSV first, then try again.`
+
+      const citations = topChunks.map((r) => ({
+        file: r.file_id ?? 'unknown',
+        page: r.page ?? undefined,
+      }))
+
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === thinkingId
+            ? { ...m, thinking: false, content: responseContent, citations }
+            : m,
+        ),
+      )
+      addToast(`[POST /search 200 OK - ${dur}ms] ${results.length} chunks`, 'ok')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setSteps((prev) =>
+        prev.map((s) =>
+          s.id === stepId ? { ...s, status: 'done', durationMs: Date.now() - t0, responseCode: 500 } : s,
+        ),
       )
       setMessages((prev) =>
+        prev.map((m) =>
+          m.id === thinkingId
+            ? { ...m, thinking: false, content: `Search failed: ${msg}\n\nIs the backend running on :8000?` }
+            : m,
+        ),
+      )
+      addToast(`[ERROR] Search failed: ${msg}`, 'err')
+    } finally {
+      setSending(false)
+    }
+  }Messages((prev) =>
         prev.map((m) =>
           m.id === thinkingId
             ? {
@@ -1294,14 +1360,30 @@ function ModuleSearch({
     return () => window.removeEventListener('keydown', handler)
   }, [onSwitchToSearch])
 
-  const doSearch = () => {
+  const doSearch = async () => {
     if (!query.trim()) return
     setSearching(true)
-    setTimeout(() => {
-      setResults(MOCK_SEARCH_HITS.slice(0, topK))
+    const t0 = Date.now()
+    try {
+      const rawResults = await searchDocs(query, topK)
+      const ms = Date.now() - t0
+      // Map backend SearchResult → SearchHit
+      const mapped = rawResults.map((r, i) => ({
+        id: `hit_${i}`,
+        text: r.text,
+        score: r.distance,
+        source: r.file_id ?? 'unknown',
+        page: r.page ?? undefined,
+        entities: [],
+      }))
+      setResults(mapped)
+      addToast(`[POST /search 200 OK - ${ms}ms] ${mapped.length} results`, 'ok')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      addToast(`[ERROR] Search failed: ${msg}`, 'err')
+    } finally {
       setSearching(false)
-      addToast(`[POST /search 200 OK - ${Math.floor(Math.random() * 50 + 18)}ms]`, 'ok')
-    }, 850)
+    }
   }
 
   const allEntities = Array.from(new Set(MOCK_SEARCH_HITS.flatMap((h) => h.entities)))
@@ -1482,27 +1564,49 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
   const runningRef = useRef(false)
   const terminalRef = useRef<HTMLDivElement>(null)
 
-  const runCode = useCallback(() => {
+  // fileId for the sandbox: use first CSV in the parsed files list, or a demo placeholder
+  const [sandboxFileId, setSandboxFileId] = useState<string>('file_7k2mxp9q')
+  const [chartBase64, setChartBase64] = useState<string | null>(null)
+
+  const runCode = useCallback(async () => {
     if (runningRef.current) return
     runningRef.current = true
     setRunning(true)
-    setOutputLines([])
+    setOutputLines(['$ Executing Python code...', '  ↳ Sending to backend @ :8000/execute'])
     setHasRun(false)
-
-    let i = 0
-    const interval = setInterval(() => {
-      i++
-      setOutputLines(DEMO_TERMINAL_LINES.slice(0, i))
-      terminalRef.current?.scrollTo({ top: terminalRef.current.scrollHeight })
-      if (i >= DEMO_TERMINAL_LINES.length) {
-        clearInterval(interval)
-        runningRef.current = false
-        setRunning(false)
-        setHasRun(true)
-        addToast('[POST /execute 200 OK - 42ms]', 'ok')
+    setChartBase64(null)
+    const t0 = Date.now()
+    try {
+      const result = await executeCode(sandboxFileId, code)
+      const ms = Date.now() - t0
+      if (result.error) {
+        setOutputLines(['$ Error during execution:', `  ${result.error}`, '', `$ Executed in ${ms}ms  ·  Exit code: 1`])
+        addToast(`[POST /execute - ${ms}ms] Exit code: 1`, 'err')
+      } else {
+        const lines = (result.stdout ?? '').split('\n')
+        setOutputLines([
+          '$ Executing Python code...',
+          `  ↳ Runtime: backend Python engine  |  ${ms}ms`,
+          '',
+          ...lines,
+          '',
+          `$ Executed in ${ms}ms  ·  Exit code: 0`,
+        ])
+        if (result.chartBase64) {
+          setChartBase64(result.chartBase64)
+        }
+        addToast(`[POST /execute 200 OK - ${ms}ms]`, 'ok')
       }
-    }, 95)
-  }, [addToast])
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      setOutputLines(['$ Connection error:', `  ${msg}`, '', '  Is the backend running on :8000?'])
+      addToast(`[ERROR] Execute failed: ${msg}`, 'err')
+    } finally {
+      runningRef.current = false
+      setRunning(false)
+      setHasRun(true)
+    }
+  }, [addToast, sandboxFileId, code])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -1541,8 +1645,15 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
         ))}
         <div className="flex-1" />
         {view === 'editor' && (
-          <div className="flex items-center gap-2 py-1.5">
-            <span className="text-xs font-mono text-zinc-700">Python 3.11 · pandas 2.2</span>
+          <div className="flex items-center gap-3 py-1.5">
+            <span className="text-xs font-mono text-zinc-700">file_id:</span>
+            <input
+              value={sandboxFileId}
+              onChange={(e) => setSandboxFileId(e.target.value)}
+              placeholder="Paste a file_id from the Ingest tab"
+              className="bg-zinc-900 border border-zinc-800 rounded px-2 py-1 text-xs font-mono text-zinc-300 placeholder-zinc-700 focus:outline-none focus:border-zinc-600 w-56 transition-colors"
+            />
+            <span className="text-xs font-mono text-zinc-700">· Python @ :8000</span>
           </div>
         )}
       </div>
@@ -1577,27 +1688,7 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
               </div>
             </div>
 
-            <div className="flex-1 overflow-auto hide-scrollbar min-h-0">
-              <div className="flex min-h-full" style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', lineHeight: '22px' }}>
-                {/* Line numbers */}
-                <div className="select-none flex-shrink-0 w-12 bg-zinc-950/50 border-r border-zinc-800 px-3 py-4 text-zinc-700 text-right">
-                  {codeLines.map((_, i) => (
-                    <div key={i}>{i + 1}</div>
-                  ))}
-                </div>
-                {/* Textarea */}
-                <textarea
-                  value={code}
-                  onChange={(e) => setCode(e.target.value)}
-                  className="flex-1 bg-transparent text-zinc-300 px-4 py-4 outline-none resize-none caret-lime-400 w-full"
-                  style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', lineHeight: '22px' }}
-                  spellCheck={false}
-                />
-              </div>
-            </div>
-          </div>
-
-          {/* Terminal */}
+            <div           {/* Terminal */}
           <div className="bg-[#050507] flex flex-col min-h-0 overflow-hidden">
             <div className="flex items-center justify-between px-4 py-2 border-b border-zinc-800/60 flex-shrink-0">
               <div className="flex items-center gap-2.5">
@@ -1609,17 +1700,18 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
                 <span className="text-xs font-mono text-zinc-600">Terminal — Python Engine @ :8000</span>
               </div>
               <div className="flex items-center gap-3">
-                {hasRun && (
-                  <>
-                    <span className="text-xs font-mono text-emerald-400">Exit: 0</span>
-                    <span className="text-xs font-mono text-zinc-600">42ms</span>
-                  </>
-                )}
                 {outputLines.length > 0 && <CopyBtn text={outputLines.join('\n')} />}
               </div>
             </div>
 
             <div ref={terminalRef} className="flex-1 overflow-auto p-4 hide-scrollbar">
+              {/* Chart output if returned from backend */}
+              {chartBase64 && (
+                <div className="mb-4 rounded border border-zinc-800 overflow-hidden">
+                  <div className="px-3 py-1.5 border-b border-zinc-800 bg-zinc-900/50 text-xs font-mono text-purple-400">chart output · PNG</div>
+                  <img src={`data:image/png;base64,${chartBase64}`} alt="Chart output" className="w-full" />
+                </div>
+              )}
               {outputLines.length > 0 ? (
                 <div
                   style={{ fontFamily: "'JetBrains Mono', monospace", fontSize: '12px', lineHeight: '22px' }}
@@ -1632,10 +1724,35 @@ function ModuleSandbox({ addToast }: { addToast: (msg: string, kind: ToastKind) 
                           ? 'text-lime-400'
                           : line.includes('Exit code: 0') || line.includes('Exit: 0')
                             ? 'text-emerald-400'
-                            : line.toLowerCase().includes('error')
+                            : line.toLowerCase().includes('error') || line.includes('Exit code: 1')
                               ? 'text-red-400'
                               : line.startsWith('  ↳')
                                 ? 'text-zinc-600'
+                                : line.includes('chart:base64:')
+                                  ? 'text-purple-400'
+                                  : 'text-zinc-400'
+                      }
+                    >
+                      {line || ' '}
+                    </div>
+                  ))}
+                  {running && (
+                    <span className="inline-block w-2 h-4 bg-lime-400 animate-pulse" />
+                  )}
+                </div>
+              ) : (
+                <div className="h-full flex items-center justify-center">
+                  <p className="text-xs font-mono text-zinc-700">
+                    Press{' '}
+                    <kbd className="px-1.5 py-0.5 rounded border border-zinc-800 text-zinc-600 mx-1">
+                      Ctrl+Enter
+                    </kbd>{' '}
+                    or click Run to execute
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>                       ? 'text-zinc-600'
                                 : line.includes('chart:base64:')
                                   ? 'text-purple-400'
                                   : 'text-zinc-400'

@@ -16,6 +16,16 @@ export default defineConfig(({ mode }) => {
       sourcemap: emitSourcemaps ? 'inline' : false,
       minify: !emitSourcemaps,
     },
+    server: {
+      proxy: {
+        // Forward /api/* to the FastAPI backend
+        '/api': {
+          target: 'http://localhost:8000',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/api/, ''),
+        },
+      },
+    },
     plugins: [
       react(),
       tailwindcss(),

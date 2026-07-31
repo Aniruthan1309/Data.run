@@ -5,6 +5,7 @@ import uuid
 import fitz
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
 from typing import List, Optional
@@ -32,6 +33,15 @@ class CleanRequest(BaseModel):
 
 # This is the "app" that Uvicorn is looking for!
 app = FastAPI()
+
+# Allow the Vite dev server and any local frontend to call the backend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 # 1. Load the model globally (OUTSIDE the endpoint)
 # This takes a few seconds to load, so doing it here means it only happens 
 # once when the server starts, not every time a user makes a request.
