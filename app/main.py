@@ -331,3 +331,86 @@ async def search_documents(request: SearchRequest):
 @app.post("/execute")
 async def execute(req: ExecuteRequest):
     return execute_code(req)
+
+
+# ─── Document Grouping by Similarity ─────────────────────────────────────────
+
+class GroupRequest(BaseModel):
+    file_ids: List[str]
+    n_intro_chunks: int = 4          # how many leading chunks to use per file
+    similarity_threshold: float = 0.72  # cosine similarity above which = same group
+
+@app.post("/group")
+async def group_files(request: GroupRequest):
+    """
+    For each file_id, fetch the first N chunks from ChromaDB,
+    mean-pool their embeddings into a single 384-dim Document Signature,
+    then cluster documents by cosine similarity.
+    """
+    import numpy as np
+
+    def cosine_sim(a, b):
+        a, b = np.array(a), np.array(b)
+        denom = (np.linalg.norm(a) * np.linalg.norm(b))
+        return float(np.dot(a, b) / denom) if denom > 0 else 0.0
+
+    # 1. Build Document Signatures
+    signatures: dict[str, list[float]] = {}
+    for fid in request.file_ids:
+        try:
+            # Query ChromaDB for chunks belonging to this file
+            results = vector_collection.get(
+                where={"file_id": fid},
+                include=["embeddings", "documents"],
+                limit=request.n_intro_chunks,
+            )
+            embs = results.get("embeddings") or []
+            if not embs:
+                continue
+            # Mean-pool → Document Signature
+            arr = np.array(embs[:request.n_intro_chunks], dtype=float)
+            signature = arr.mean(axis=0).tolist()
+            signatures[fid] = signature
+        except Exception:
+            continue  # skip files with no indexed chunks
+
+    if not signatures:
+        return {"groups": [], "signatures_computed": 0}
+
+    fids = list(signatures.keys())
+    n = len(fids)
+
+    # 2. Greedy union-find clustering by cosine similarity
+    parent = list(range(n))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(x, y):
+        parent[find(x)] = find(y)
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            sim = cosine_sim(signatures[fids[i]], signatures[fids[j]])
+            if sim >= request.similarity_threshold:
+                union(i, j)
+
+    # 3. Collect groups
+    from collections import defaultdict
+    cluster_map: dict[int, list[str]] = defaultdict(list)
+    for i, fid in enumerate(fids):
+        cluster_map[find(i)].append(fid)
+
+    groups = [
+        {"group_id": idx, "file_ids": members}
+        for idx, members in enumerate(cluster_map.values())
+    ]
+
+    return {
+        "groups": groups,
+        "signatures_computed": len(signatures),
+        "files_without_chunks": [f for f in request.file_ids if f not in signatures],
+    }

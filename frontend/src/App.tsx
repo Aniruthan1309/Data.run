@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react'
-import { parseCSV, parsePDF, cleanData, searchDocs, executeCode, embedChunks, SearchResult } from './api'
+import { parseCSV, parsePDF, cleanData, searchDocs, executeCode, embedChunks, groupFiles, SearchResult, FileGroup, GroupResponse } from './api'
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
@@ -600,6 +600,9 @@ function ModuleIngestion({
   const [castColumn, setCastColumn] = useState('')
   const [castDtype, setCastDtype] = useState('float64')
   const [showCastInputs, setShowCastInputs] = useState(false)
+  const [groupLoading, setGroupLoading] = useState(false)
+  const [groupResult, setGroupResult] = useState<GroupResponse | null>(null)
+  const [simThreshold, setSimThreshold] = useState(0.72)
   const fileRef = useRef<HTMLInputElement>(null)
 
   const handleFiles = async (dropped: File[]) => {
@@ -697,6 +700,27 @@ function ModuleIngestion({
   }
 
   const selectedFile = files.find((f) => f.type === 'csv' && f.status === 'done') ?? files[0]
+
+  const handleGroup = async () => {
+    const indexedPdfs = files.filter((f) => f.type === 'pdf' && f.status === 'done')
+    if (indexedPdfs.length < 2) {
+      addToast('[INFO] Need at least 2 indexed PDFs to group', 'err')
+      return
+    }
+    setGroupLoading(true)
+    setGroupResult(null)
+    const t0 = Date.now()
+    try {
+      const result = await groupFiles(indexedPdfs.map((f) => f.id), 4, simThreshold)
+      setGroupResult(result)
+      addToast(`[POST /group 200 OK - ${Date.now() - t0}ms] ${result.groups.length} groups · ${result.signatures_computed} signatures`, 'ok')
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err)
+      addToast(`[ERROR] Grouping failed: ${msg}`, 'err')
+    } finally {
+      setGroupLoading(false)
+    }
+  }
 
   const cleanOps: { op: CleanOp; label: string; desc: string }[] = [
     { op: 'drop_nulls', label: 'Drop Nulls', desc: 'Remove rows with NaN' },
@@ -1000,6 +1024,91 @@ function ModuleIngestion({
           )}
         </div>
 
+        {/* ── Group by Similarity ───────────────────────── */}
+        <div className="rounded border border-zinc-800 bg-zinc-900/30 p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-xs font-semibold text-zinc-300">Group by Similarity</p>
+              <p className="text-xs font-mono text-zinc-600 mt-0.5">Mean-pools first 4 chunk embeddings → 384-dim Document Signature</p>
+            </div>
+          </div>
+
+          {/* Threshold slider */}
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-mono text-zinc-500 w-24 flex-shrink-0">Threshold</span>
+            <input
+              type="range" min={0.5} max={0.99} step={0.01}
+              value={simThreshold}
+              onChange={(e) => setSimThreshold(Number(e.target.value))}
+              className="flex-1"
+            />
+            <span className="text-xs font-mono text-zinc-300 w-10 text-right tabular-nums">
+              {simThreshold.toFixed(2)}
+            </span>
+          </div>
+          <p className="text-xs font-mono text-zinc-700">
+            cosine similarity ≥ {simThreshold.toFixed(2)} → same group
+          </p>
+
+          {/* Trigger button */}
+          <button
+            onClick={handleGroup}
+            disabled={groupLoading || files.filter(f => f.type === 'pdf' && f.status === 'done').length < 2}
+            className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded border border-purple-400/30 bg-purple-400/8 text-purple-400 text-xs font-mono hover:bg-purple-400/15 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+          >
+            {groupLoading
+              ? <><span className="animate-spin">◐</span> Computing signatures…</>
+              : <><span>⬡</span> Group Files by Similarity</>
+            }
+          </button>
+
+          {/* Results */}
+          {groupResult && (
+            <div className="space-y-2 pt-1">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-mono text-zinc-400">
+                  {groupResult.groups.length} group{groupResult.groups.length !== 1 ? 's' : ''} · {groupResult.signatures_computed} signatures
+                </span>
+                {groupResult.files_without_chunks.length > 0 && (
+                  <span className="text-xs font-mono text-amber-400">
+                    {groupResult.files_without_chunks.length} unindexed
+                  </span>
+                )}
+              </div>
+
+              {groupResult.groups.map((g, idx) => {
+                const GROUP_COLORS = [
+                  'border-purple-400/25 bg-purple-400/5 text-purple-300',
+                  'border-cyan-400/25 bg-cyan-400/5 text-cyan-300',
+                  'border-amber-400/25 bg-amber-400/5 text-amber-300',
+                  'border-rose-400/25 bg-rose-400/5 text-rose-300',
+                  'border-lime-400/25 bg-lime-400/5 text-lime-300',
+                ]
+                const colorClass = GROUP_COLORS[idx % GROUP_COLORS.length]
+                return (
+                  <div key={g.group_id} className={`rounded border p-2.5 space-y-1.5 ${colorClass}`}>
+                    <span className="text-xs font-mono opacity-60">Cluster {idx + 1}</span>
+                    <div className="flex flex-wrap gap-1">
+                      {g.file_ids.map((fid) => {
+                        const f = files.find(x => x.id === fid)
+                        return (
+                          <span
+                            key={fid}
+                            title={fid}
+                            className="inline-flex items-center gap-1 text-xs font-mono px-1.5 py-0.5 rounded bg-black/20 border border-white/10"
+                          >
+                            ⊟ {f?.name ?? fid}
+                          </span>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          )}
+        </div>
+
         {/* Endpoint reference */}
         <div className="rounded border border-zinc-800 bg-zinc-900/30 p-4">
           <p className="text-xs font-mono text-zinc-700 mb-2.5">ENDPOINT REFERENCE</p>
@@ -1008,7 +1117,7 @@ function ModuleIngestion({
               { method: 'POST', path: '/parse/csv', desc: 'Ingest & profile CSV' },
               { method: 'POST', path: '/parse/pdf', desc: 'Extract & chunk PDF' },
               { method: 'POST', path: '/clean', desc: 'Apply cleaning operation' },
-              { method: 'GET', path: '/parse/status/:id', desc: 'Async parse status' },
+              { method: 'POST', path: '/group', desc: 'Group files by similarity' },
             ].map((ep) => (
               <div key={ep.path} className="flex items-center gap-2">
                 <span

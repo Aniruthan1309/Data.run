@@ -110,3 +110,39 @@ export async function embedChunks(
   })
   return handleResponse<{ message: string }>(res)
 }
+
+// ─── Document Grouping ────────────────────────────────────────────────────────
+
+export interface FileGroup {
+  group_id: number
+  file_ids: string[]
+}
+
+export interface GroupResponse {
+  groups: FileGroup[]
+  signatures_computed: number
+  files_without_chunks: string[]
+}
+
+/**
+ * Group files by semantic similarity using Document Signatures.
+ * Each file's first `nIntroChunks` embeddings are mean-pooled into a single
+ * 384-dim vector; files with cosine similarity ≥ threshold land in the same group.
+ */
+export async function groupFiles(
+  fileIds: string[],
+  nIntroChunks: number = 4,
+  similarityThreshold: number = 0.72,
+): Promise<GroupResponse> {
+  const res = await fetch(`${BASE_URL}/group`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      file_ids: fileIds,
+      n_intro_chunks: nIntroChunks,
+      similarity_threshold: similarityThreshold,
+    }),
+  })
+  return handleResponse<GroupResponse>(res)
+}
+
