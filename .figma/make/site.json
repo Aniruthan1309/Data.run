@@ -1,0 +1,10 @@
+{
+  "description": "Advanced dark-mode platform enabling developers to ingest, analyze, and query data with hybrid AI agents, code sandboxing, and real-time orchestration insights.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}

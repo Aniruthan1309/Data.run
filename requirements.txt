@@ -8,3 +8,5 @@ pydantic
 sentence-transformers
 chromadb
 PyMuPDF
+qdrant-client
+requests
