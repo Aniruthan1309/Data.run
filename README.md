@@ -1,7 +1,5 @@
 Note for Evaluators:
-This repository uses a branch-based development workflow. Individual features (such as document upload, search, indexing, data cleaning, and other components) have been developed and tested in separate feature branches. The main branch may not yet contain all completed work. Please review the relevant feature branches for the latest implementation and progress.
-
-See the branches Integration and a
+This repository uses a branch-based development workflow. Individual features (such as document upload, search, indexing, data cleaning, and other components) have been developed and tested in separate feature branches. The main branch may not yet contain all completed work. 
 
 # Data.run
 
