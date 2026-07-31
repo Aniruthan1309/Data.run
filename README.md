@@ -22,7 +22,7 @@ An AI-powered analytics agent that combines semantic document retrieval and Pyth
 - **Python** & **FastAPI**: High-performance API for data processing.
 - **Pandas**: Core library for tabular data analytics.
 - **Sentence Transformers**: Generating embeddings for semantic search.
-- **Qdrant**: High-performance vector database for storing and querying embeddings.
+- **Chroma**: High-performance vector database for storing and querying embeddings.
 - **Matplotlib**: For generating data visualizations on the backend.
 
 ## Layer	Tech
