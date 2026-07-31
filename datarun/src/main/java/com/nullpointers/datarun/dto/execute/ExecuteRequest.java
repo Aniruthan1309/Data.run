@@ -5,7 +5,7 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ExecuteRequest(
-        @JsonProperty("file_id")
+        @JsonProperty("fileId")
         String fileId,
         String code) {
 }
