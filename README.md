@@ -26,16 +26,16 @@ An AI-powered analytics agent that combines semantic document retrieval and Pyth
 - **Matplotlib**: For generating data visualizations on the backend.
 
 ## Layer	Tech
--Orchestrator	Java, Spring Boot, Spring AI (ChatClient, @Tool, ChatMemory)
--LLM	flash, via gemini API 
--Inter-service comms	REST/HTTP, JSON contract
--Data service	Python, FastAPI
--CSV parsing	pandas
--PDF parsing	pdfplumber / PyMuPDF (+ camelot-py for tables)
--Embeddings	sentence-transformers (local, no API dependency)
--Vector DB	Chroma
--Execution service	Python, FastAPI, sandboxed subprocess (timeout, restricted namespace)
--Charts	matplotlib (returned as base64 PNG)
+- Orchestrator	Java, Spring Boot, Spring AI (ChatClient, @Tool, ChatMemory)
+- LLM	flash, via gemini API 
+- Inter-service comms	REST/HTTP, JSON contract
+- Data service	Python, FastAPI
+- CSV parsing	pandas
+- PDF parsing	pdfplumber / PyMuPDF (+ camelot-py for tables)
+- Embeddings	sentence-transformers (local, no API dependency)
+- Vector DB	Chroma
+- Execution service	Python, FastAPI, sandboxed subprocess (timeout, restricted namespace)
+- Charts	matplotlib (returned as base64 PNG)
 
 
 ## 💡 How It Works
