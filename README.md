@@ -25,36 +25,18 @@ An AI-powered analytics agent that combines semantic document retrieval and Pyth
 - **Qdrant**: High-performance vector database for storing and querying embeddings.
 - **Matplotlib**: For generating data visualizations on the backend.
 
-## 📁 Project Structure
+## Layer	Tech
+Orchestrator	Java, Spring Boot, Spring AI (ChatClient, @Tool, ChatMemory)
+LLM	flash, via gemini API 
+Inter-service comms	REST/HTTP, JSON contract
+Data service	Python, FastAPI
+CSV parsing	pandas
+PDF parsing	pdfplumber / PyMuPDF (+ camelot-py for tables)
+Embeddings	sentence-transformers (local, no API dependency)
+Vector DB	Chroma
+Execution service	Python, FastAPI, sandboxed subprocess (timeout, restricted namespace)
+Charts	matplotlib (returned as base64 PNG)
 
-- **`/` (Root)**: Contains the React frontend application.
-- **`/Data.run`**: Contains the backend services, Python scripts, and Spring Boot application.
-
-## ⚙️ Setup Instructions
-
-### 1. Frontend Setup
-Make sure you have Node.js installed. From the root directory:
-```bash
-# Install dependencies
-npm install
-
-# Start the development server
-npm run dev
-```
-
-### 2. Backend Setup
-Navigate into the backend directory to set up the Python and Spring Boot services.
-```bash
-cd Data.run
-
-# (Optional) Create a virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-
-# Install Python requirements
-pip install -r requirements.txt
-```
-*Note: Make sure to start both the Python FastAPI server and the Spring Boot application as per the backend's specific startup instructions.*
 
 ## 💡 How It Works
 1. **Upload Data**: Users upload CSVs or PDFs through the modern React interface.
